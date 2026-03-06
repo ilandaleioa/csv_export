@@ -150,6 +150,16 @@ def team_name(tid):
 def player_name(pid):
     return player_map.get(pid, str(pid))
 
+st.sidebar.markdown("---")
+sel_equipo_global = st.sidebar.selectbox(
+    "🔍 Filtrar por equipo",
+    ["Todos"] + sorted(team_map.values()),
+    key="filtro_equipo_global",
+)
+
+# IDs del equipo seleccionado (para usar en todas las secciones)
+_equipo_ids = [k for k, v in team_map.items() if v == sel_equipo_global] if sel_equipo_global != "Todos" else []
+
 page = st.sidebar.radio(
     "Sección",
     ["🏠 Inicio", "📅 Partidos", "⚽ Goles", "🟨 Tarjetas", "👥 Plantillas", "🔄 Sustituciones", "📊 Explorador CSV"],
@@ -163,16 +173,26 @@ if page == "🏠 Inicio":
         comp = competition.iloc[0]
         st.markdown(f"**Competición:** {comp.get('competition_name', '–')}  ·  **Temporada:** {comp.get('season_name', '–')}")
 
+    _matches_inicio = matches.copy()
+    _goals_inicio = goals.copy()
+    _players_inicio = players.copy()
+    if _equipo_ids:
+        _matches_inicio = _matches_inicio[(_matches_inicio["home_team_id"].isin(_equipo_ids)) | (_matches_inicio["away_team_id"].isin(_equipo_ids))]
+        _match_ids_inicio = _matches_inicio["match_id"].unique()
+        _goals_inicio = _goals_inicio[_goals_inicio["match_id"].isin(_match_ids_inicio)]
+        _lineup_inicio = lineups[lineups["match_id"].isin(_match_ids_inicio) & lineups["team_id"].isin(_equipo_ids)]
+        _players_inicio = players[players["player_id"].isin(_lineup_inicio["player_id"].unique())]
+
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Equipos", len(teams))
-    col2.metric("Partidos", len(matches))
-    col3.metric("Jugadores", len(players))
-    col4.metric("Goles", len(goals))
+    col1.metric("Equipos", len(teams) if not _equipo_ids else 1)
+    col2.metric("Partidos", len(_matches_inicio))
+    col3.metric("Jugadores", len(_players_inicio))
+    col4.metric("Goles", len(_goals_inicio))
 
     st.subheader("Clasificación (puntos estimados)")
     # Calcular clasificación básica
     rows = []
-    for _, m in matches.iterrows():
+    for _, m in _matches_inicio.iterrows():
         hs, aws = m["home_score"], m["away_score"]
         ht, at = m["home_team_id"], m["away_team_id"]
         if hs > aws:
@@ -206,19 +226,17 @@ if page == "🏠 Inicio":
 elif page == "📅 Partidos":
     st.title("📅 Partidos")
 
-    # Filtros
-    col_f1, col_f2 = st.columns(2)
-    jornadas = sorted(matches["match_week"].dropna().unique())
-    sel_jornada = col_f1.selectbox("Jornada", ["Todas"] + [int(j) for j in jornadas])
-    sel_equipo = col_f2.selectbox("Equipo", ["Todos"] + sorted(team_map.values()))
-
+    # Aplicar filtro global de equipo
     df = matches.copy()
+    if _equipo_ids:
+        df = df[(df["home_team_id"].isin(_equipo_ids)) | (df["away_team_id"].isin(_equipo_ids))]
+
+    # Filtro de jornada
+    jornadas = sorted(df["match_week"].dropna().unique())
+    sel_jornada = st.selectbox("Jornada", ["Todas"] + [int(j) for j in jornadas])
+
     if sel_jornada != "Todas":
         df = df[df["match_week"] == sel_jornada]
-    if sel_equipo != "Todos":
-        tid = [k for k, v in team_map.items() if v == sel_equipo]
-        if tid:
-            df = df[(df["home_team_id"].isin(tid)) | (df["away_team_id"].isin(tid))]
 
     df["Local"] = df["home_team_id"].map(team_name)
     df["Visitante"] = df["away_team_id"].map(team_name)
@@ -236,9 +254,12 @@ elif page == "📅 Partidos":
 
     # Detalle de un partido
     st.subheader("Detalle de partido")
+    _matches_detail = matches.copy()
+    if _equipo_ids:
+        _matches_detail = _matches_detail[(_matches_detail["home_team_id"].isin(_equipo_ids)) | (_matches_detail["away_team_id"].isin(_equipo_ids))]
     match_options = {
         f"J{int(r.match_week)} · {team_name(r.home_team_id)} {int(r.home_score)}-{int(r.away_score)} {team_name(r.away_team_id)} ({r.match_date})": r.match_id
-        for _, r in matches.iterrows()
+        for _, r in _matches_detail.iterrows()
     }
     sel_match = st.selectbox("Selecciona un partido", list(match_options.keys()))
     mid = match_options[sel_match]
@@ -298,6 +319,9 @@ elif page == "⚽ Goles":
     st.title("⚽ Goles")
 
     df = goals.copy()
+    if _equipo_ids:
+        _match_ids_goles = matches[(matches["home_team_id"].isin(_equipo_ids)) | (matches["away_team_id"].isin(_equipo_ids))]["match_id"].unique()
+        df = df[df["match_id"].isin(_match_ids_goles)]
     df["Goleador"] = df["scorer_player_id"].map(player_name)
     df["Equipo"] = df["scoring_team_id"].map(team_name)
 
@@ -324,6 +348,9 @@ elif page == "⚽ Goles":
 elif page == "🟨 Tarjetas":
     st.title("🟨 Tarjetas")
     df = cards.copy()
+    if _equipo_ids:
+        _match_ids_tarj = matches[(matches["home_team_id"].isin(_equipo_ids)) | (matches["away_team_id"].isin(_equipo_ids))]["match_id"].unique()
+        df = df[df["match_id"].isin(_match_ids_tarj)]
     df["Jugador"] = df["player_id"].map(player_name)
     df["Equipo"] = df["team_id"].map(team_name)
 
@@ -357,7 +384,11 @@ elif page == "🟨 Tarjetas":
 # ── Página: Plantillas ────────────────────────────────────────
 elif page == "👥 Plantillas":
     st.title("👥 Plantillas")
-    sel = st.selectbox("Equipo", sorted(team_map.values()))
+    _plantilla_opciones = sorted(team_map.values())
+    _plantilla_default = 0
+    if sel_equipo_global != "Todos" and sel_equipo_global in _plantilla_opciones:
+        _plantilla_default = _plantilla_opciones.index(sel_equipo_global)
+    sel = st.selectbox("Equipo", _plantilla_opciones, index=_plantilla_default)
     tid = [k for k, v in team_map.items() if v == sel][0]
 
     # Jugadores del equipo (aparecen en lineups)
@@ -412,6 +443,9 @@ elif page == "👥 Plantillas":
 elif page == "🔄 Sustituciones":
     st.title("🔄 Sustituciones")
     df = subs.copy()
+    if _equipo_ids:
+        _match_ids_subs = matches[(matches["home_team_id"].isin(_equipo_ids)) | (matches["away_team_id"].isin(_equipo_ids))]["match_id"].unique()
+        df = df[df["match_id"].isin(_match_ids_subs)]
     df["Sale"] = df["player_out_id"].map(player_name)
     df["Entra"] = df["player_in_id"].map(player_name)
     df["Equipo"] = df["team_id"].map(team_name)
