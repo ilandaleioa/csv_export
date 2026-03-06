@@ -508,8 +508,11 @@ elif page == "📈 Gráficas":
     _g_match_ids = _g_matches["match_id"].unique()
     _g_goals = _g_goals[_g_goals["match_id"].isin(_g_match_ids)]
 
+    tab_equipo, tab_jugador = st.tabs(["🏟️ EQUIPO", "👤 JUGADOR"])
+
     # ── Gráficas de EQUIPO ─────────────────────────────────────────
-    st.header("🏟️ Estadísticas por equipo")
+    with tab_equipo:
+        st.header("🏟️ Estadísticas por equipo")
 
     team_rows = []
     for _, m in _g_matches.iterrows():
