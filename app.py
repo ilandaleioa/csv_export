@@ -55,47 +55,11 @@ def competition_label(folder_path):
 st.sidebar.title("⚽ Athletic Club")
 st.sidebar.caption("CSV Explorer")
 
-# --- Importar nueva competición ---
-st.sidebar.markdown("---")
-st.sidebar.subheader("📥 Importar competición")
-uploaded_zip = st.sidebar.file_uploader(
-    "Sube un ZIP con los CSV", type=["zip"], help="El ZIP debe contener los CSV de StatsBomb (Match.csv, Team.csv, etc.)"
-)
-if uploaded_zip is not None:
-    # Nombre de carpeta seguro a partir del nombre del ZIP
-    safe_name = re.sub(r"[^\w\-.]", "_", os.path.splitext(uploaded_zip.name)[0])
-    dest_folder = os.path.join(DATA_ROOT, safe_name)
-    if os.path.isdir(dest_folder):
-        st.sidebar.warning(f"Ya existe '{safe_name}'. Borra la carpeta para reimportar.")
-    else:
-        with zipfile.ZipFile(io.BytesIO(uploaded_zip.read())) as zf:
-            # Buscar dónde está Match.csv dentro del ZIP
-            csv_members = [m for m in zf.namelist() if m.endswith(".csv") and not m.startswith("__MACOSX")]
-            if not csv_members:
-                st.sidebar.error("No se encontraron CSVs en el ZIP.")
-            else:
-                # Detectar prefijo común (por si los CSV están en una subcarpeta del ZIP)
-                match_member = [m for m in csv_members if m.endswith("/Match.csv") or m == "Match.csv"]
-                prefix = ""
-                if match_member:
-                    prefix = match_member[0].rsplit("Match.csv", 1)[0]
-
-                os.makedirs(dest_folder, exist_ok=True)
-                for member in csv_members:
-                    if member.startswith(prefix):
-                        filename = os.path.basename(member)
-                        if filename:
-                            data = zf.read(member)
-                            with open(os.path.join(dest_folder, filename), "wb") as f:
-                                f.write(data)
-
-                if os.path.isfile(os.path.join(dest_folder, REQUIRED_CSV)):
-                    st.sidebar.success(f"✅ Importado: {safe_name}")
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    shutil.rmtree(dest_folder, ignore_errors=True)
-                    st.sidebar.error("El ZIP no contiene Match.csv.")
+# Contenedores en el orden visual deseado
+_ctn_seccion = st.sidebar.container()
+_ctn_competicion = st.sidebar.container()
+_ctn_filtros = st.sidebar.container()
+_ctn_importar = st.sidebar.container()
 
 # --- Selector de competición ---
 competitions = discover_competitions()
@@ -104,13 +68,14 @@ if not competitions:
     st.error("No hay datos. Sube un ZIP con CSVs de StatsBomb usando el panel lateral.")
     st.stop()
 
-st.sidebar.markdown("---")
-comp_labels = {k: competition_label(v) for k, v in competitions.items()}
-sel_comp_key = st.sidebar.selectbox(
-    "🏆 Competición",
-    list(competitions.keys()),
-    format_func=lambda k: comp_labels[k],
-)
+with _ctn_competicion:
+    st.markdown("---")
+    comp_labels = {k: competition_label(v) for k, v in competitions.items()}
+    sel_comp_key = st.selectbox(
+        "🏆 Competición",
+        list(competitions.keys()),
+        format_func=lambda k: comp_labels[k],
+    )
 DATA_DIR = competitions[sel_comp_key]
 
 # ── Carga de datos ─────────────────────────────────────────────
@@ -150,12 +115,13 @@ def team_name(tid):
 def player_name(pid):
     return player_map.get(pid, str(pid))
 
-st.sidebar.markdown("---")
-sel_equipo_global = st.sidebar.selectbox(
-    "🔍 Filtrar por equipo",
-    ["Todos"] + sorted(team_map.values()),
-    key="filtro_equipo_global",
-)
+with _ctn_filtros:
+    st.markdown("---")
+    sel_equipo_global = st.selectbox(
+        "🔍 Filtrar por equipo",
+        ["Todos"] + sorted(team_map.values()),
+        key="filtro_equipo_global",
+    )
 
 # IDs del equipo seleccionado (para usar en todas las secciones)
 _equipo_ids = [k for k, v in team_map.items() if v == sel_equipo_global] if sel_equipo_global != "Todos" else []
@@ -169,18 +135,64 @@ if _equipo_ids:
 else:
     _opciones_jugador = sorted(player_map.values())
 
-sel_jugador_global = st.sidebar.selectbox(
-    "👤 Filtrar por jugador",
-    ["Todos"] + _opciones_jugador,
-    key="filtro_jugador_global",
-)
+with _ctn_filtros:
+    sel_jugador_global = st.selectbox(
+        "👤 Filtrar por jugador",
+        ["Todos"] + _opciones_jugador,
+        key="filtro_jugador_global",
+    )
 
 _jugador_ids = [k for k, v in player_map.items() if v == sel_jugador_global] if sel_jugador_global != "Todos" else []
 
-page = st.sidebar.radio(
-    "Sección",
-    ["🏠 Inicio", "📅 Partidos", "⚽ Goles", "🟨 Tarjetas", "👥 Plantillas", "🔄 Sustituciones", "📈 Gráficas", "📊 Explorador CSV"],
-)
+with _ctn_seccion:
+    page = st.radio(
+        "Sección",
+        ["🏠 Inicio", "📅 Partidos", "⚽ Goles", "🟨 Tarjetas", "👥 Plantillas", "🔄 Sustituciones", "📈 Gráficas", "📊 Explorador CSV"],
+    )
+
+# --- Importar nueva competición ---
+with _ctn_importar:
+    st.markdown("---")
+    st.subheader("📥 Importar competición")
+    uploaded_zip = st.file_uploader(
+        "Sube un ZIP con los CSV", type=["zip"], help="El ZIP debe contener los CSV de StatsBomb (Match.csv, Team.csv, etc.)"
+    )
+if uploaded_zip is not None:
+    safe_name = re.sub(r"[^\w\-.]", "_", os.path.splitext(uploaded_zip.name)[0])
+    dest_folder = os.path.join(DATA_ROOT, safe_name)
+    if os.path.isdir(dest_folder):
+        with _ctn_importar:
+            st.warning(f"Ya existe '{safe_name}'. Borra la carpeta para reimportar.")
+    else:
+        with zipfile.ZipFile(io.BytesIO(uploaded_zip.read())) as zf:
+            csv_members = [m for m in zf.namelist() if m.endswith(".csv") and not m.startswith("__MACOSX")]
+            if not csv_members:
+                with _ctn_importar:
+                    st.error("No se encontraron CSVs en el ZIP.")
+            else:
+                match_member = [m for m in csv_members if m.endswith("/Match.csv") or m == "Match.csv"]
+                prefix = ""
+                if match_member:
+                    prefix = match_member[0].rsplit("Match.csv", 1)[0]
+
+                os.makedirs(dest_folder, exist_ok=True)
+                for member in csv_members:
+                    if member.startswith(prefix):
+                        filename = os.path.basename(member)
+                        if filename:
+                            data = zf.read(member)
+                            with open(os.path.join(dest_folder, filename), "wb") as f:
+                                f.write(data)
+
+                if os.path.isfile(os.path.join(dest_folder, REQUIRED_CSV)):
+                    with _ctn_importar:
+                        st.success(f"✅ Importado: {safe_name}")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    shutil.rmtree(dest_folder, ignore_errors=True)
+                    with _ctn_importar:
+                        st.error("El ZIP no contiene Match.csv.")
 
 # ── Página: Inicio ─────────────────────────────────────────────
 if page == "🏠 Inicio":
@@ -587,6 +599,13 @@ elif page == "📈 Gráficas":
         _eq_match_ids = _eq_matches["match_id"].unique()
         _eq_lineup = lineups[(lineups["team_id"] == _sel_tid) & (lineups["match_id"].isin(_eq_match_ids))].copy()
 
+        # Filtro de jugador local
+        _jugadores_equipo_graf = sorted(
+            [player_map[pid] for pid in _eq_lineup["player_id"].unique() if pid in player_map]
+        )
+        sel_jugador_graf = st.selectbox("Jugador", ["Todos"] + _jugadores_equipo_graf, key="graf_jugador")
+        _jugador_graf_ids = [k for k, v in player_map.items() if v == sel_jugador_graf] if sel_jugador_graf != "Todos" else []
+
         if _eq_lineup.empty:
             st.info("No hay datos de alineación para este equipo.")
         else:
@@ -624,9 +643,10 @@ elif page == "📈 Gráficas":
 
             player_stats["Jugador"] = player_stats["player_id"].map(player_name)
 
-            # Filtrar por jugador global si aplica
-            if _jugador_ids:
-                player_stats = player_stats[player_stats["player_id"].isin(_jugador_ids)]
+            # Filtrar por jugador (local del tab o global del sidebar)
+            _filtro_jug = _jugador_graf_ids if _jugador_graf_ids else _jugador_ids
+            if _filtro_jug:
+                player_stats = player_stats[player_stats["player_id"].isin(_filtro_jug)]
 
             player_stats = player_stats.sort_values("Minutos", ascending=False)
 
