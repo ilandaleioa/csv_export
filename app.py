@@ -160,9 +160,26 @@ sel_equipo_global = st.sidebar.selectbox(
 # IDs del equipo seleccionado (para usar en todas las secciones)
 _equipo_ids = [k for k, v in team_map.items() if v == sel_equipo_global] if sel_equipo_global != "Todos" else []
 
+# Filtro de jugador (dependiente del equipo)
+if _equipo_ids:
+    _jugadores_equipo = lineups[lineups["team_id"].isin(_equipo_ids)]["player_id"].unique()
+    _opciones_jugador = sorted(
+        [player_map[pid] for pid in _jugadores_equipo if pid in player_map]
+    )
+else:
+    _opciones_jugador = sorted(player_map.values())
+
+sel_jugador_global = st.sidebar.selectbox(
+    "👤 Filtrar por jugador",
+    ["Todos"] + _opciones_jugador,
+    key="filtro_jugador_global",
+)
+
+_jugador_ids = [k for k, v in player_map.items() if v == sel_jugador_global] if sel_jugador_global != "Todos" else []
+
 page = st.sidebar.radio(
     "Sección",
-    ["🏠 Inicio", "📅 Partidos", "⚽ Goles", "🟨 Tarjetas", "👥 Plantillas", "🔄 Sustituciones", "� Gráficas", "�📊 Explorador CSV"],
+    ["🏠 Inicio", "📅 Partidos", "⚽ Goles", "🟨 Tarjetas", "👥 Plantillas", "🔄 Sustituciones", "📈 Gráficas", "📊 Explorador CSV"],
 )
 
 # ── Página: Inicio ─────────────────────────────────────────────
@@ -182,6 +199,9 @@ if page == "🏠 Inicio":
         _goals_inicio = _goals_inicio[_goals_inicio["match_id"].isin(_match_ids_inicio)]
         _lineup_inicio = lineups[lineups["match_id"].isin(_match_ids_inicio) & lineups["team_id"].isin(_equipo_ids)]
         _players_inicio = players[players["player_id"].isin(_lineup_inicio["player_id"].unique())]
+    if _jugador_ids:
+        _goals_inicio = _goals_inicio[_goals_inicio["scorer_player_id"].isin(_jugador_ids)]
+        _players_inicio = _players_inicio[_players_inicio["player_id"].isin(_jugador_ids)]
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Equipos", len(teams) if not _equipo_ids else 1)
@@ -227,10 +247,13 @@ if page == "🏠 Inicio":
 elif page == "📅 Partidos":
     st.title("📅 Partidos")
 
-    # Aplicar filtro global de equipo
+    # Aplicar filtros globales
     df = matches.copy()
     if _equipo_ids:
         df = df[(df["home_team_id"].isin(_equipo_ids)) | (df["away_team_id"].isin(_equipo_ids))]
+    if _jugador_ids:
+        _match_ids_jugador = lineups[lineups["player_id"].isin(_jugador_ids)]["match_id"].unique()
+        df = df[df["match_id"].isin(_match_ids_jugador)]
 
     # Filtro de jornada
     jornadas = sorted(df["match_week"].dropna().unique())
@@ -258,6 +281,9 @@ elif page == "📅 Partidos":
     _matches_detail = matches.copy()
     if _equipo_ids:
         _matches_detail = _matches_detail[(_matches_detail["home_team_id"].isin(_equipo_ids)) | (_matches_detail["away_team_id"].isin(_equipo_ids))]
+    if _jugador_ids:
+        _match_ids_detail_jug = lineups[lineups["player_id"].isin(_jugador_ids)]["match_id"].unique()
+        _matches_detail = _matches_detail[_matches_detail["match_id"].isin(_match_ids_detail_jug)]
     match_options = {
         f"J{int(r.match_week)} · {team_name(r.home_team_id)} {int(r.home_score)}-{int(r.away_score)} {team_name(r.away_team_id)} ({r.match_date})": r.match_id
         for _, r in _matches_detail.iterrows()
@@ -323,6 +349,8 @@ elif page == "⚽ Goles":
     if _equipo_ids:
         _match_ids_goles = matches[(matches["home_team_id"].isin(_equipo_ids)) | (matches["away_team_id"].isin(_equipo_ids))]["match_id"].unique()
         df = df[df["match_id"].isin(_match_ids_goles)]
+    if _jugador_ids:
+        df = df[df["scorer_player_id"].isin(_jugador_ids)]
     df["Goleador"] = df["scorer_player_id"].map(player_name)
     df["Equipo"] = df["scoring_team_id"].map(team_name)
 
@@ -352,6 +380,8 @@ elif page == "🟨 Tarjetas":
     if _equipo_ids:
         _match_ids_tarj = matches[(matches["home_team_id"].isin(_equipo_ids)) | (matches["away_team_id"].isin(_equipo_ids))]["match_id"].unique()
         df = df[df["match_id"].isin(_match_ids_tarj)]
+    if _jugador_ids:
+        df = df[df["player_id"].isin(_jugador_ids)]
     df["Jugador"] = df["player_id"].map(player_name)
     df["Equipo"] = df["team_id"].map(team_name)
 
@@ -385,11 +415,12 @@ elif page == "🟨 Tarjetas":
 # ── Página: Plantillas ────────────────────────────────────────
 elif page == "👥 Plantillas":
     st.title("👥 Plantillas")
-    _plantilla_opciones = sorted(team_map.values())
-    _plantilla_default = 0
-    if sel_equipo_global != "Todos" and sel_equipo_global in _plantilla_opciones:
-        _plantilla_default = _plantilla_opciones.index(sel_equipo_global)
-    sel = st.selectbox("Equipo", _plantilla_opciones, index=_plantilla_default)
+    if _equipo_ids:
+        # Si hay filtro global de equipo, usarlo directamente
+        _plantilla_opciones = [team_map[tid] for tid in _equipo_ids]
+    else:
+        _plantilla_opciones = sorted(team_map.values())
+    sel = st.selectbox("Equipo", _plantilla_opciones, index=0)
     tid = [k for k, v in team_map.items() if v == sel][0]
 
     # Jugadores del equipo (aparecen en lineups)
@@ -429,9 +460,12 @@ elif page == "👥 Plantillas":
 
     titularidades = titularidades.sort_values(["Titularidades", "Goles"], ascending=False).reset_index(drop=True)
     titularidades.index += 1
+    _n_rows = len(titularidades)
+    _table_height = min(36 * (_n_rows + 1) + 2, 36 * 26 + 2)  # hasta 25 filas sin scroll
     st.dataframe(
         titularidades[["Dorsal", "Jugador", "Convocatorias", "Titularidades", "Suplencias", "Goles", "🟨", "🟥"]],
         use_container_width=True,
+        height=_table_height,
     )
 
     # Cuerpo técnico
@@ -447,6 +481,8 @@ elif page == "🔄 Sustituciones":
     if _equipo_ids:
         _match_ids_subs = matches[(matches["home_team_id"].isin(_equipo_ids)) | (matches["away_team_id"].isin(_equipo_ids))]["match_id"].unique()
         df = df[df["match_id"].isin(_match_ids_subs)]
+    if _jugador_ids:
+        df = df[(df["player_out_id"].isin(_jugador_ids)) | (df["player_in_id"].isin(_jugador_ids))]
     df["Sale"] = df["player_out_id"].map(player_name)
     df["Entra"] = df["player_in_id"].map(player_name)
     df["Equipo"] = df["team_id"].map(team_name)
@@ -455,7 +491,7 @@ elif page == "🔄 Sustituciones":
         lambda r: f"J{int(r.match_week)} · {r.match_date}", axis=1
     )
     st.dataframe(
-        df[["Partido", "Equipo", "minute", "Sale", "Entra"]].sort_values(["match_date", "minute"]),
+        df.sort_values(["match_date", "minute"])[["Partido", "Equipo", "minute", "Sale", "Entra"]],
         use_container_width=True, hide_index=True,
     )
 
@@ -536,11 +572,11 @@ elif page == "📈 Gráficas":
     # ── Gráficas de JUGADOR ────────────────────────────────────────
     st.header("👤 Estadísticas por jugador")
 
-    _graf_equipos = sorted(team_map.values())
-    _graf_default = 0
-    if sel_equipo_global != "Todos" and sel_equipo_global in _graf_equipos:
-        _graf_default = _graf_equipos.index(sel_equipo_global)
-    sel_equipo_graf = st.selectbox("Equipo", _graf_equipos, index=_graf_default, key="graf_equipo")
+    if _equipo_ids:
+        _graf_opciones = [team_map[tid] for tid in _equipo_ids]
+    else:
+        _graf_opciones = sorted(team_map.values())
+    sel_equipo_graf = st.selectbox("Equipo", _graf_opciones, index=0, key="graf_equipo")
     _sel_tid = [k for k, v in team_map.items() if v == sel_equipo_graf][0]
 
     _eq_matches = matches[(matches["home_team_id"] == _sel_tid) | (matches["away_team_id"] == _sel_tid)]
@@ -583,6 +619,11 @@ elif page == "📈 Gráficas":
         player_stats["Goles"] = player_stats["Goles"].astype(int)
 
         player_stats["Jugador"] = player_stats["player_id"].map(player_name)
+
+        # Filtrar por jugador global si aplica
+        if _jugador_ids:
+            player_stats = player_stats[player_stats["player_id"].isin(_jugador_ids)]
+
         player_stats = player_stats.sort_values("Minutos", ascending=False)
 
         top_n = st.slider("Mostrar top jugadores", 5, max(len(player_stats), 5), min(15, len(player_stats)), key="graf_topn")
@@ -633,6 +674,35 @@ elif page == "📊 Explorador CSV":
     sel_csv = st.selectbox("Archivo CSV", sorted(csv_files))
     df = load_csv(DATA_DIR, sel_csv)
     st.caption(f"{len(df)} filas · {len(df.columns)} columnas")
+
+    # Aplicar filtros globales transversales
+    _total_antes = len(df)
+    if _equipo_ids:
+        _team_cols = [c for c in df.columns if c in ("team_id", "home_team_id", "scoring_team_id")]
+        _match_cols = [c for c in df.columns if c == "match_id"]
+        if _team_cols:
+            _mask_team = pd.DataFrame(False, index=df.index, columns=["_hit"])
+            for tc in _team_cols:
+                _mask_team["_hit"] = _mask_team["_hit"] | df[tc].isin(_equipo_ids)
+            # Si hay away_team_id, incluirlo también
+            if "away_team_id" in df.columns:
+                _mask_team["_hit"] = _mask_team["_hit"] | df["away_team_id"].isin(_equipo_ids)
+            df = df[_mask_team["_hit"]]
+        elif _match_cols:
+            _match_ids_filtro = matches[(matches["home_team_id"].isin(_equipo_ids)) | (matches["away_team_id"].isin(_equipo_ids))]["match_id"].unique()
+            df = df[df["match_id"].isin(_match_ids_filtro)]
+    if _jugador_ids:
+        _player_cols = [c for c in df.columns if c in ("player_id", "scorer_player_id", "player_out_id", "player_in_id")]
+        if _player_cols:
+            _mask_player = pd.DataFrame(False, index=df.index, columns=["_hit"])
+            for pc in _player_cols:
+                _mask_player["_hit"] = _mask_player["_hit"] | df[pc].isin(_jugador_ids)
+            df = df[_mask_player["_hit"]]
+        elif "match_id" in df.columns:
+            _match_ids_jug_csv = lineups[lineups["player_id"].isin(_jugador_ids)]["match_id"].unique()
+            df = df[df["match_id"].isin(_match_ids_jug_csv)]
+    if len(df) < _total_antes:
+        st.caption(f"🔍 Filtros globales aplicados: {len(df)} de {_total_antes} filas")
 
     # Filtro de texto
     filtro = st.text_input("Buscar en tabla (texto libre)")
