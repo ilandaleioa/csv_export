@@ -1,50 +1,154 @@
 import streamlit as st
 import pandas as pd
 import os
+import zipfile
+import io
+import shutil
+import re
 
 # ── Configuración ──────────────────────────────────────────────
 st.set_page_config(page_title="Athletic Club · CSV Explorer", layout="wide", page_icon="⚽")
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "csv_export")
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.path.join(APP_DIR, "data")
+os.makedirs(DATA_ROOT, exist_ok=True)
+
+# Migrar la carpeta csv_export original a data/ si aún no se ha hecho
+_legacy_dir = os.path.join(APP_DIR, "csv_export")
+if os.path.isdir(_legacy_dir) and os.path.isfile(os.path.join(_legacy_dir, "Match.csv")):
+    _dest = os.path.join(DATA_ROOT, "csv_export")
+    if not os.path.isdir(_dest):
+        shutil.copytree(_legacy_dir, _dest)
+
+# ── Descubrir carpetas de competición ──────────────────────────
+REQUIRED_CSV = "Match.csv"
+
+def discover_competitions():
+    """Devuelve {nombre_carpeta: ruta} para cada subcarpeta de data/ que contenga Match.csv"""
+    comps = {}
+    for name in sorted(os.listdir(DATA_ROOT)):
+        folder = os.path.join(DATA_ROOT, name)
+        if os.path.isdir(folder) and os.path.isfile(os.path.join(folder, REQUIRED_CSV)):
+            comps[name] = folder
+    return comps
+
+def competition_label(folder_path):
+    """Intenta leer Competition_Season.csv para obtener un nombre legible."""
+    cs_path = os.path.join(folder_path, "Competition_Season.csv")
+    if os.path.isfile(cs_path):
+        try:
+            df = pd.read_csv(cs_path)
+            if not df.empty:
+                row = df.iloc[0]
+                parts = []
+                if pd.notna(row.get("competition_name")):
+                    parts.append(str(row["competition_name"]))
+                if pd.notna(row.get("season_name")):
+                    parts.append(str(row["season_name"]))
+                if parts:
+                    return " · ".join(parts)
+        except Exception:
+            pass
+    return os.path.basename(folder_path)
+
+# ── Sidebar ────────────────────────────────────────────────────
+st.sidebar.title("⚽ Athletic Club")
+st.sidebar.caption("CSV Explorer")
+
+# --- Importar nueva competición ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("📥 Importar competición")
+uploaded_zip = st.sidebar.file_uploader(
+    "Sube un ZIP con los CSV", type=["zip"], help="El ZIP debe contener los CSV de StatsBomb (Match.csv, Team.csv, etc.)"
+)
+if uploaded_zip is not None:
+    # Nombre de carpeta seguro a partir del nombre del ZIP
+    safe_name = re.sub(r"[^\w\-.]", "_", os.path.splitext(uploaded_zip.name)[0])
+    dest_folder = os.path.join(DATA_ROOT, safe_name)
+    if os.path.isdir(dest_folder):
+        st.sidebar.warning(f"Ya existe '{safe_name}'. Borra la carpeta para reimportar.")
+    else:
+        with zipfile.ZipFile(io.BytesIO(uploaded_zip.read())) as zf:
+            # Buscar dónde está Match.csv dentro del ZIP
+            csv_members = [m for m in zf.namelist() if m.endswith(".csv") and not m.startswith("__MACOSX")]
+            if not csv_members:
+                st.sidebar.error("No se encontraron CSVs en el ZIP.")
+            else:
+                # Detectar prefijo común (por si los CSV están en una subcarpeta del ZIP)
+                match_member = [m for m in csv_members if m.endswith("/Match.csv") or m == "Match.csv"]
+                prefix = ""
+                if match_member:
+                    prefix = match_member[0].rsplit("Match.csv", 1)[0]
+
+                os.makedirs(dest_folder, exist_ok=True)
+                for member in csv_members:
+                    if member.startswith(prefix):
+                        filename = os.path.basename(member)
+                        if filename:
+                            data = zf.read(member)
+                            with open(os.path.join(dest_folder, filename), "wb") as f:
+                                f.write(data)
+
+                if os.path.isfile(os.path.join(dest_folder, REQUIRED_CSV)):
+                    st.sidebar.success(f"✅ Importado: {safe_name}")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    shutil.rmtree(dest_folder, ignore_errors=True)
+                    st.sidebar.error("El ZIP no contiene Match.csv.")
+
+# --- Selector de competición ---
+competitions = discover_competitions()
+
+if not competitions:
+    st.error("No hay datos. Sube un ZIP con CSVs de StatsBomb usando el panel lateral.")
+    st.stop()
+
+st.sidebar.markdown("---")
+comp_labels = {k: competition_label(v) for k, v in competitions.items()}
+sel_comp_key = st.sidebar.selectbox(
+    "🏆 Competición",
+    list(competitions.keys()),
+    format_func=lambda k: comp_labels[k],
+)
+DATA_DIR = competitions[sel_comp_key]
 
 # ── Carga de datos ─────────────────────────────────────────────
 @st.cache_data
-def load_csv(name):
-    path = os.path.join(DATA_DIR, name)
-    return pd.read_csv(path)
+def load_csv(data_dir, name):
+    path = os.path.join(data_dir, name)
+    if os.path.isfile(path):
+        return pd.read_csv(path)
+    return pd.DataFrame()
 
 @st.cache_data
-def load_all():
-    teams = load_csv("Team.csv")
-    players = load_csv("Player.csv")
-    matches = load_csv("Match.csv")
-    goals = load_csv("Goal.csv")
-    cards = load_csv("Card.csv")
-    lineups = load_csv("Lineup.csv")
-    subs = load_csv("Substitution.csv")
-    stadiums = load_csv("Stadium.csv")
-    referees = load_csv("Referee.csv")
-    coaching = load_csv("CoachingStaff.csv")
-    competition = load_csv("Competition_Season.csv")
+def load_all(data_dir):
+    teams = load_csv(data_dir, "Team.csv")
+    players = load_csv(data_dir, "Player.csv")
+    matches = load_csv(data_dir, "Match.csv")
+    goals = load_csv(data_dir, "Goal.csv")
+    cards = load_csv(data_dir, "Card.csv")
+    lineups = load_csv(data_dir, "Lineup.csv")
+    subs = load_csv(data_dir, "Substitution.csv")
+    stadiums = load_csv(data_dir, "Stadium.csv")
+    referees = load_csv(data_dir, "Referee.csv")
+    coaching = load_csv(data_dir, "CoachingStaff.csv")
+    competition = load_csv(data_dir, "Competition_Season.csv")
     return teams, players, matches, goals, cards, lineups, subs, stadiums, referees, coaching, competition
 
-teams, players, matches, goals, cards, lineups, subs, stadiums, referees, coaching, competition = load_all()
+teams, players, matches, goals, cards, lineups, subs, stadiums, referees, coaching, competition = load_all(DATA_DIR)
 
 # Diccionarios auxiliares
-team_map = dict(zip(teams["team_id"], teams["team_name"]))
-player_map = dict(zip(players["player_id"], players["player_name"]))
-stadium_map = dict(zip(stadiums["stadium_id"], stadiums["name"]))
-referee_map = dict(zip(referees["referee_id"], referees["name"]))
+team_map = dict(zip(teams["team_id"], teams["team_name"])) if not teams.empty else {}
+player_map = dict(zip(players["player_id"], players["player_name"])) if not players.empty else {}
+stadium_map = dict(zip(stadiums["stadium_id"], stadiums["name"])) if not stadiums.empty else {}
+referee_map = dict(zip(referees["referee_id"], referees["name"])) if not referees.empty else {}
 
 def team_name(tid):
     return team_map.get(tid, str(tid))
 
 def player_name(pid):
     return player_map.get(pid, str(pid))
-
-# ── Sidebar ────────────────────────────────────────────────────
-st.sidebar.title("⚽ Athletic Club")
-st.sidebar.caption("CSV Explorer")
 
 page = st.sidebar.radio(
     "Sección",
@@ -325,7 +429,7 @@ elif page == "📊 Explorador CSV":
     st.title("📊 Explorador CSV")
     csv_files = [f for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
     sel_csv = st.selectbox("Archivo CSV", sorted(csv_files))
-    df = load_csv(sel_csv)
+    df = load_csv(DATA_DIR, sel_csv)
     st.caption(f"{len(df)} filas · {len(df.columns)} columnas")
 
     # Filtro de texto
