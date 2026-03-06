@@ -1,0 +1,10 @@
+.venv/
+.git/
+__MACOSX/
+__pycache__/
+*.pyc
+.gitignore
+.firebaserc
+firebase.json
+README.md
+csv_export/
